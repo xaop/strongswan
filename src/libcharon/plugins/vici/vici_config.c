@@ -321,6 +321,7 @@ typedef struct {
 	linked_list_t *proposals;
 	linked_list_t *children;
 	linked_list_t *vips;
+	linked_list_t *static_vips;
 	char *pools;
 	uint64_t reauth_time;
 	uint64_t rekey_time;
@@ -441,6 +442,17 @@ static void log_peer_data(peer_data_t *data)
 	}
 	enumerator->destroy(enumerator);
 
+	if (data->static_vips->get_count(data->static_vips))
+	{
+		DBG2(DBG_CFG, "  static_vips:");
+	}
+	enumerator = data->static_vips->create_enumerator(data->static_vips);
+	while (enumerator->enumerate(enumerator, &host))
+	{
+		DBG2(DBG_CFG, "   %H", host);
+	}
+	enumerator->destroy(enumerator);
+
 	enumerator = data->local->create_enumerator(data->local);
 	while (enumerator->enumerate(enumerator, &auth))
 	{
@@ -470,6 +482,7 @@ static void free_peer_data(peer_data_t *data)
 	data->proposals->destroy_offset(data->proposals,
 									offsetof(proposal_t, destroy));
 	data->vips->destroy_offset(data->vips, offsetof(host_t, destroy));
+	data->static_vips->destroy_offset(data->static_vips, offsetof(host_t, destroy));
 	free(data->pools);
 	free(data->local_addrs);
 	free(data->remote_addrs);
@@ -1718,6 +1731,7 @@ CALLBACK(peer_li, bool,
 		{ "remote_addrs",	parse_stringlist,	&peer->remote_addrs			},
 		{ "proposals",		parse_ike_proposal,	peer->proposals				},
 		{ "vips",			parse_hosts,		peer->vips					},
+		{ "static_vips",	parse_hosts,		peer->static_vips			},
 		{ "pools",			parse_stringlist,	&peer->pools				},
 	};
 
@@ -2322,6 +2336,7 @@ CALLBACK(config_sn, bool,
 		.local = linked_list_create(),
 		.remote = linked_list_create(),
 		.vips = linked_list_create(),
+		.static_vips = linked_list_create(),
 		.children = linked_list_create(),
 		.proposals = linked_list_create(),
 		.mobike = TRUE,
@@ -2529,6 +2544,10 @@ CALLBACK(config_sn, bool,
 	while (peer.vips->remove_first(peer.vips, (void**)&host) == SUCCESS)
 	{
 		peer_cfg->add_virtual_ip(peer_cfg, host);
+	}
+	while (peer.static_vips->remove_first(peer.static_vips, (void**)&host) == SUCCESS)
+	{
+		peer_cfg->add_static_virtual_ip(peer_cfg, host);
 	}
 	if (peer.pools)
 	{
