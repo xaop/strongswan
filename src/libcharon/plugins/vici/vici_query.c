@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2017 Tobias Brunner
+ * Copyright (C) 2015-2020 Tobias Brunner
  * Copyright (C) 2015-2018 Andreas Steffen
  * HSR Hochschule fuer Technik Rapperswil
  *
@@ -309,6 +309,31 @@ static void list_child(private_vici_query_t *this, vici_builder_t *b,
 	b->end_list(b /* remote-ts */);
 }
 
+
+/**
+ * List all CHILD_SAs in the given IKE_SA in a new section called "child-sas"
+ */
+static void list_children(private_vici_query_t *this, vici_builder_t *b,
+						  ike_sa_t *ike_sa, time_t now)
+{
+	enumerator_t *csas;
+	child_sa_t *child_sa;
+	char buf[BUF_LEN];
+
+	b->begin_section(b, "child-sas");
+	csas = ike_sa->create_child_sa_enumerator(ike_sa);
+	while (csas->enumerate(csas, &child_sa))
+	{
+		snprintf(buf, sizeof(buf), "%s-%u", child_sa->get_name(child_sa),
+				 child_sa->get_unique_id(child_sa));
+		b->begin_section(b, buf);
+		list_child(this, b, child_sa, now);
+		b->end_section(b);
+	}
+	csas->destroy(csas);
+	b->end_section(b /* child-sas */ );
+}
+
 /**
  * List tasks in a specific queue
  */
@@ -501,14 +526,12 @@ CALLBACK(list_sas, vici_message_t*,
 	private_vici_query_t *this, char *name, u_int id, vici_message_t *request)
 {
 	vici_builder_t *b;
-	enumerator_t *isas, *csas;
+	enumerator_t *isas;
 	ike_sa_t *ike_sa;
-	child_sa_t *child_sa;
 	time_t now;
 	char *ike;
 	u_int ike_id;
 	bool bl;
-	char buf[BUF_LEN];
 
 	bl = request->get_str(request, NULL, "noblock") == NULL;
 	ike = request->get_str(request, NULL, "ike");
@@ -532,19 +555,7 @@ CALLBACK(list_sas, vici_message_t*,
 		b->begin_section(b, ike_sa->get_name(ike_sa));
 
 		list_ike(this, b, ike_sa, now);
-
-		b->begin_section(b, "child-sas");
-		csas = ike_sa->create_child_sa_enumerator(ike_sa);
-		while (csas->enumerate(csas, &child_sa))
-		{
-			snprintf(buf, sizeof(buf), "%s-%u", child_sa->get_name(child_sa),
-					 child_sa->get_unique_id(child_sa));
-			b->begin_section(b, buf);
-			list_child(this, b, child_sa, now);
-			b->end_section(b);
-		}
-		csas->destroy(csas);
-		b->end_section(b /* child-sas */ );
+		list_children(this, b, ike_sa, now);
 
 		b->end_section(b);
 
@@ -1683,6 +1694,7 @@ static void manage_commands(private_vici_query_t *this, bool reg)
 	this->dispatcher->manage_event(this->dispatcher, "list-cert", reg);
 	this->dispatcher->manage_event(this->dispatcher, "ike-updown", reg);
 	this->dispatcher->manage_event(this->dispatcher, "ike-rekey", reg);
+	this->dispatcher->manage_event(this->dispatcher, "ike-update", reg);
 	this->dispatcher->manage_event(this->dispatcher, "child-updown", reg);
 	this->dispatcher->manage_event(this->dispatcher, "child-rekey", reg);
 	manage_command(this, "list-sas", list_sas, reg);
@@ -1751,6 +1763,45 @@ METHOD(listener_t, ike_rekey, bool,
 
 	this->dispatcher->raise_event(this->dispatcher,
 								  "ike-rekey", 0, b->finalize(b));
+
+	return TRUE;
+}
+
+METHOD(listener_t, ike_update, bool,
+	private_vici_query_t *this, ike_sa_t *ike_sa, bool local, host_t *new)
+{
+	vici_builder_t *b;
+	time_t now;
+
+	if (!this->dispatcher->has_event_listeners(this->dispatcher, "ike-update"))
+	{
+		return TRUE;
+	}
+
+	now = time_monotonic(NULL);
+
+	b = vici_builder_create();
+
+	if (local)
+	{
+		b->add_kv(b, "local", "yes");
+	}
+	b->add_kv(b, "new-host", "%H", new);
+	b->add_kv(b, "new-port", "%d", new->get_port(new));
+
+	b->begin_section(b, ike_sa->get_name(ike_sa));
+	list_ike(this, b, ike_sa, now);
+	b->end_section(b);
+
+	b->begin_section(b, ike_sa->get_name(ike_sa));
+
+	list_ike(this, b, ike_sa, now);
+	list_children(this, b, ike_sa, now);
+
+	b->end_section(b);
+
+	this->dispatcher->raise_event(this->dispatcher,
+								  "ike-updown", 0, b->finalize(b));
 
 	return TRUE;
 }
@@ -1853,6 +1904,7 @@ vici_query_t *vici_query_create(vici_dispatcher_t *dispatcher)
 			.listener = {
 				.ike_updown = _ike_updown,
 				.ike_rekey = _ike_rekey,
+				.ike_update = _ike_update,
 				.child_updown = _child_updown,
 				.child_rekey = _child_rekey,
 			},

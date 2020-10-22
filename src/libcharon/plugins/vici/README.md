@@ -976,6 +976,20 @@ The _ike-rekey_ event is issued when an IKE_SA is rekeyed.
 		}
 	}
 
+### ike-update ###
+
+The _ike-update_ event is issued when the local or remote endpoint address of an
+IKE_SA is about to change.
+
+	{
+		local = <set if the local endpoint changed>
+		new-host = <new IKE endpoint address>
+		new-port = <new IKE endpoint port>
+		<IKE_SA config name> = {
+			<same data as in the list-sas event (listing the old address)>
+		}
+	}
+
 ### child-updown ###
 
 The _child-updown_ event is issued when a CHILD_SA is established or terminated.
